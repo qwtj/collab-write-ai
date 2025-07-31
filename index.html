@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accessible Collaborative Word Editor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- For Markdown Rendering and Syntax Highlighting -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+        html, body {
+            height: 100%;
+            overflow: hidden; /* Prevent body scrollbars */
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* gray-100 */
+            color: #1f2937; /* gray-800 */
+        }
+        /* High-contrast focus rings for keyboard users, not shown on mouse click */
+        :focus-visible {
+            outline: 3px solid #2563eb; /* blue-600 */
+            outline-offset: 2px;
+        }
+        /* Style for the rendered content view */
+        #editor-display {
+            height: 100%;
+            width: 100%;
+            padding: 1rem;
+            border: 2px solid #d1d5db; /* gray-300 */
+            border-radius: 0.5rem; /* rounded-lg */
+            background-color: white;
+            cursor: text;
+            overflow-y: auto; /* Add scroll if content overflows */
+        }
+        #editor-input {
+             height: 100%;
+            width: 100%;
+            padding: 1rem;
+            border: 2px solid #3b82f6;
+            border-radius: 0.5rem;
+            background-color: white;
+            resize: none;
+        }
+        #editor-input:focus {
+            outline: none;
+        }
+        /* Styles for rendered Markdown elements */
+        #editor-display h1 { font-size: 2em; font-weight: bold; margin-bottom: 0.7em; }
+        #editor-display h2 { font-size: 1.5em; font-weight: bold; margin-bottom: 0.6em; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em;}
+        #editor-display h3 { font-size: 1.25em; font-weight: bold; margin-bottom: 0.5em; }
+        #editor-display p { margin-bottom: 1em; line-height: 1.6; }
+        #editor-display ul { list-style-type: disc; padding-left: 2em; margin-bottom: 1em; }
+        #editor-display ol { list-style-type: decimal; padding-left: 2em; margin-bottom: 1em; }
+        #editor-display blockquote { border-left: 4px solid #d1d5db; padding-left: 1em; margin-left: 0; font-style: italic; color: #4b5563; }
+        #editor-display code { background-color: #e5e7eb; padding: 0.2em 0.4em; border-radius: 3px; font-family: monospace; }
+        #editor-display pre { border-radius: 0.5rem; background-color: #282c34; color: #abb2bf; padding: 1em; }
+        #editor-display pre code { background-color: transparent; padding: 0; }
+        
+        /* --- FIX: Styles for full-height code view --- */
+        #editor-display.code-view-active {
+            background-color: #282c34;
+            color: #abb2bf;
+            padding: 0;
+        }
+        #editor-display.code-view-active pre {
+            height: 100%;
+            margin: 0;
+            padding: 1rem;
+            overflow-y: auto;
+            background-color: transparent;
+        }
+
+        .view-btn.active {
+            background-color: #1d4ed8; /* blue-700 */
+            color: white;
+        }
+        /* Styles for collapsible section */
+        #collaboration-content {
+            max-height: 500px; /* Set a max-height larger than the content */
+            transition: max-height 0.5s ease-in-out, opacity 0.3s ease-in-out, padding 0.5s ease-in-out, margin 0.5s ease-in-out;
+            overflow: hidden;
+            opacity: 1;
+        }
+        #collaboration-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+            margin-top: 0 !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+        }
+        #collapse-icon {
+            transition: transform 0.3s ease-in-out;
+        }
+        #collapse-icon.rotated {
+            transform: rotate(-90deg);
+        }
+        /* Styles for the text action bar */
+        #action-bar {
+            position: absolute;
+            background-color: #1f2937; /* gray-800 */
+            color: white;
+            border-radius: 0.5rem;
+            padding: 0.25rem;
+            display: flex;
+            gap: 0.25rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            z-index: 10;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.1s ease-in-out, visibility 0s linear 0.1s;
+        }
+        #action-bar.visible {
+            visibility: visible;
+            opacity: 1;
+            transition: opacity 0.1s ease-in-out;
+        }
+        .action-btn {
+            background-color: transparent;
+            border: none;
+            color: white;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+        .action-btn:hover {
+            background-color: #4b5563; /* gray-600 */
+        }
+    </style>
+</head>
+<body class="h-screen">
+
+    <div class="container mx-auto p-4 h-full flex flex-col">
+        
+        <!-- Collaboration Info Section -->
+        <div class="bg-white p-4 rounded-lg shadow-md mb-4 flex-shrink-0">
+            <button id="collaboration-toggle" aria-controls="collaboration-content" aria-expanded="true" class="w-full flex justify-between items-center cursor-pointer">
+                <h2 class="text-lg font-semibold">Collaboration</h2>
+                <svg id="collapse-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                </svg>
+            </button>
+            <div id="collaboration-content" class="mt-3">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:space-x-4 space-y-3 sm:space-y-0">
+                    <div class="flex-grow">
+                        <label for="docIdInput" class="block text-sm font-medium text-gray-700 mb-1">Current Document ID (Copy to Share):</label>
+                        <div class="flex rounded-md shadow-sm">
+                            <input type="text" id="docIdInput" readonly class="flex-1 block w-full rounded-none rounded-l-md sm:text-sm border-gray-400 bg-gray-200 cursor-not-allowed p-2">
+                            <button id="copyDocIdBtn" class="inline-flex items-center px-3 py-2 border border-l-0 border-gray-400 bg-gray-100 text-sm font-medium text-gray-800 hover:bg-gray-200 rounded-r-md">
+                                Copy
+                            </button>
+                        </div>
+                    </div>
+                    <div class="sm:border-l sm:pl-4">
+                         <button id="newDocBtn" class="w-full sm:w-auto bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-200">
+                            New Document
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-4 pt-4 border-t border-gray-200">
+                    <label for="joinIdInput" class="block text-sm font-medium text-gray-700 mb-1">Or, Join an Existing Document</label>
+                    <div class="flex space-x-2">
+                        <input type="text" id="joinIdInput" placeholder="Paste Document ID here" class="flex-1 block w-full rounded-md sm:text-sm border-gray-400 p-2 transition duration-200">
+                        <button id="joinDocBtn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 transition duration-200">
+                            Join
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Accessibility Button Bar -->
+        <div class="bg-white p-2 rounded-lg shadow-md mb-4 flex items-center space-x-2 flex-shrink-0" role="toolbar" aria-label="Editor view modes">
+            <span class="text-sm font-medium text-gray-700 mr-2">View as:</span>
+            <button id="view-plaintext" class="view-btn px-3 py-1 text-sm font-medium rounded-md hover:bg-gray-200 transition">Plaintext</button>
+            <button id="view-markdown" class="view-btn px-3 py-1 text-sm font-medium rounded-md hover:bg-gray-200 transition">Markdown</button>
+            <div class="flex items-center space-x-2" id="code-view-controls">
+                <button id="view-code" class="view-btn px-3 py-1 text-sm font-medium rounded-md hover:bg-gray-200 transition">Code</button>
+                <select id="language-select" aria-label="Select code language" class="hidden text-sm rounded-md border-gray-400 shadow-sm p-1">
+                    <option value="javascript">JavaScript</option>
+                    <option value="python">Python</option>
+                    <option value="c">C</option>
+                    <option value="cpp">C++</option>
+                    <option value="typescript">TypeScript</option>
+                    <option value="swift">Swift</option>
+                    <option value="rust">Rust</option>
+                    <option value="go">Go</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Editor Section -->
+        <main id="editor-wrapper" class="bg-white rounded-lg shadow-md relative flex-grow">
+            <div id="editor-display" role="document" aria-live="polite"></div>
+            <textarea id="editor-input" aria-label="Document content editor" class="hidden"></textarea>
+            <!-- Hot Action Bar for Text Selection -->
+            <div id="action-bar">
+                <button class="action-btn" data-action="action1">Action 1</button>
+                <button class="action-btn" data-action="action2">Action 2</button>
+                <button class="action-btn" data-action="action3">Action 3</button>
+                <button class="action-btn" data-action="action4">Action 4</button>
+                <button class="action-btn" data-action="action5">Action 5</button>
+            </div>
+        </main>
+
+        <!-- Status/Toast Message -->
+        <div id="toast" role="status" aria-live="polite" class="fixed bottom-5 right-5 bg-green-700 text-white py-2 px-4 rounded-lg shadow-lg opacity-0 transition-opacity duration-300">
+            Message
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- DOM Element References ---
+        const editorDisplay = document.getElementById('editor-display');
+        const editorInput = document.getElementById('editor-input');
+        const docIdInput = document.getElementById('docIdInput');
+        const newDocBtn = document.getElementById('newDocBtn');
+        const copyDocIdBtn = document.getElementById('copyDocIdBtn');
+        const joinIdInput = document.getElementById('joinIdInput');
+        const joinDocBtn = document.getElementById('joinDocBtn');
+        const toast = document.getElementById('toast');
+        const viewPlaintextBtn = document.getElementById('view-plaintext');
+        const viewMarkdownBtn = document.getElementById('view-markdown');
+        const viewCodeBtn = document.getElementById('view-code');
+        const languageSelect = document.getElementById('language-select');
+        const collaborationToggle = document.getElementById('collaboration-toggle');
+        const collaborationContent = document.getElementById('collaboration-content');
+        const collapseIcon = document.getElementById('collapse-icon');
+        const actionBar = document.getElementById('action-bar');
+
+        // --- Firebase & State Variables ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-word-editor';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db, auth, userId;
+        let currentDocId = null;
+        let unsubscribeDoc = null; 
+        let isUpdatingFromFirestore = false;
+        let localState = {
+            content: '',
+            viewMode: 'plaintext',
+            codeLanguage: 'javascript'
+        };
+
+        // --- Utility Functions ---
+        function debounce(func, delay) {
+            let timeout;
+            return (...args) => {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), delay);
+            };
+        }
+
+        function showToast(message, isError = false) {
+            toast.textContent = message;
+            toast.className = `fixed bottom-5 right-5 text-white py-2 px-4 rounded-lg shadow-lg transition-opacity duration-300 ${isError ? 'bg-red-600' : 'bg-green-700'}`;
+            toast.classList.remove('opacity-0');
+            setTimeout(() => toast.classList.add('opacity-0'), 3000);
+        }
+
+        // --- Main Application Logic ---
+        async function main() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                onAuthStateChanged(auth, user => {
+                    if (user) {
+                        userId = user.uid;
+                        console.log("User authenticated with UID:", userId);
+                        initializeDocument();
+                    }
+                });
+
+                if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken);
+                else await signInAnonymously(auth);
+
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                editorDisplay.innerText = "Error: Could not connect to the database.";
+            }
+        }
+
+        // --- Document Handling ---
+        function initializeDocument() {
+            const docIdFromUrl = window.location.hash.substring(1);
+            const docIdFromStorage = localStorage.getItem('wordEditorDocId');
+            if (docIdFromUrl) loadDocument(docIdFromUrl);
+            else if (docIdFromStorage) loadDocument(docIdFromStorage);
+            else createNewDocument();
+        }
+
+        async function createNewDocument() {
+            try {
+                const docRef = await addDoc(collection(db, `artifacts/${appId}/public/data/documents`), {
+                    content: '# Welcome!\n\nThis is a new document. Select some text to see the action bar.',
+                    viewMode: 'markdown',
+                    codeLanguage: 'javascript',
+                    createdAt: serverTimestamp(),
+                    owner: userId
+                });
+                loadDocument(docRef.id);
+            } catch (error) {
+                console.error("Error creating new document:", error);
+                showToast("Failed to create new document.", true);
+            }
+        }
+
+        function loadDocument(docId) {
+            if (!docId || typeof docId !== 'string' || docId.trim() === '') {
+                showToast("Invalid Document ID provided.", true);
+                return;
+            }
+            if (unsubscribeDoc) unsubscribeDoc();
+
+            currentDocId = docId;
+            docIdInput.value = currentDocId;
+            localStorage.setItem('wordEditorDocId', currentDocId);
+
+            const docRef = doc(db, `artifacts/${appId}/public/data/documents`, currentDocId);
+            unsubscribeDoc = onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    isUpdatingFromFirestore = true;
+                    const data = docSnap.data();
+                    
+                    const isEditing = !editorInput.classList.contains('hidden');
+                    if (localState.content !== data.content && !isEditing) {
+                        localState.content = data.content || '';
+                    }
+                    localState.viewMode = data.viewMode || 'plaintext';
+                    localState.codeLanguage = data.codeLanguage || 'javascript';
+                    
+                    if (!isEditing) {
+                        renderView();
+                    }
+                    isUpdatingFromFirestore = false;
+                } else {
+                    editorDisplay.innerText = `Document not found. Start typing to create it, or click 'New Document'.`;
+                }
+            }, (error) => {
+                console.error("Error listening to document:", error);
+                showToast("Error loading document.", true);
+            });
+        }
+        
+        const saveToFirestore = debounce(async (dataToSave) => {
+            if (!currentDocId || isUpdatingFromFirestore) return;
+            const docRef = doc(db, `artifacts/${appId}/public/data/documents`, currentDocId);
+            try {
+                await setDoc(docRef, dataToSave, { merge: true });
+                console.log("Saved to Firestore:", dataToSave);
+            } catch (error) {
+                console.error("Error saving content:", error);
+                showToast("Error saving changes.", true);
+            }
+        }, 500);
+
+        // --- View Rendering & Mode Switching ---
+        function renderView() {
+            document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+            languageSelect.classList.add('hidden');
+            editorDisplay.classList.remove('code-view-active'); // Reset class
+
+            if (localState.viewMode === 'plaintext') {
+                viewPlaintextBtn.classList.add('active');
+                editorDisplay.innerText = localState.content;
+            } else if (localState.viewMode === 'markdown') {
+                viewMarkdownBtn.classList.add('active');
+                editorDisplay.innerHTML = marked.parse(localState.content);
+            } else if (localState.viewMode === 'code') {
+                viewCodeBtn.classList.add('active');
+                languageSelect.classList.remove('hidden');
+                languageSelect.value = localState.codeLanguage;
+                editorDisplay.classList.add('code-view-active'); // Apply special class for code view
+                const highlightedCode = hljs.highlight(localState.content, { language: localState.codeLanguage, ignoreIllegals: true }).value;
+                editorDisplay.innerHTML = `<pre><code>${highlightedCode}</code></pre>`;
+            }
+        }
+
+        function setViewMode(mode) {
+            localState.viewMode = mode;
+            renderView(); 
+            saveToFirestore({ viewMode: mode });
+        }
+
+        function setCodeLanguage(lang) {
+            localState.codeLanguage = lang;
+            renderView();
+            saveToFirestore({ codeLanguage: lang });
+        }
+
+        function switchToEditMode() {
+            editorInput.value = localState.content;
+            editorDisplay.classList.add('hidden');
+            editorInput.classList.remove('hidden');
+            editorInput.focus();
+        }
+
+        function switchToViewMode() {
+            editorDisplay.classList.remove('hidden');
+            editorInput.classList.add('hidden');
+            renderView();
+        }
+        
+        // --- Event Listeners ---
+        editorInput.addEventListener('input', () => {
+            localState.content = editorInput.value;
+            saveToFirestore({ content: editorInput.value });
+        });
+        
+        editorInput.addEventListener('blur', switchToViewMode);
+        editorDisplay.addEventListener('dblclick', switchToEditMode);
+
+        viewPlaintextBtn.addEventListener('click', () => setViewMode('plaintext'));
+        viewMarkdownBtn.addEventListener('click', () => setViewMode('markdown'));
+        viewCodeBtn.addEventListener('click', () => setViewMode('code'));
+        languageSelect.addEventListener('change', (e) => setCodeLanguage(e.target.value));
+
+        newDocBtn.addEventListener('click', createNewDocument);
+        copyDocIdBtn.addEventListener('click', () => {
+            docIdInput.select();
+            document.execCommand('copy');
+            showToast("Document ID copied to clipboard!");
+        });
+        joinDocBtn.addEventListener('click', () => {
+            const idToJoin = joinIdInput.value.trim();
+            if (idToJoin) {
+                loadDocument(idToJoin);
+                joinIdInput.value = '';
+            } else {
+                showToast("Please paste a Document ID to join.", true);
+            }
+        });
+        
+        collaborationToggle.addEventListener('click', () => {
+            const isExpanded = collaborationToggle.getAttribute('aria-expanded') === 'true';
+            collaborationToggle.setAttribute('aria-expanded', !isExpanded);
+            collaborationContent.classList.toggle('collapsed');
+            collapseIcon.classList.toggle('rotated');
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                if (!editorInput.classList.contains('hidden')) {
+                    switchToViewMode();
+                }
+            }
+        });
+
+        // --- Action Bar Logic ---
+        function handleSelection() {
+            setTimeout(() => {
+                const selection = window.getSelection();
+                if (selection.isCollapsed || selection.rangeCount === 0) {
+                    actionBar.classList.remove('visible');
+                    return;
+                }
+                
+                const range = selection.getRangeAt(0);
+                if (!editorDisplay.contains(range.commonAncestorContainer)) {
+                    actionBar.classList.remove('visible');
+                    return;
+                }
+                
+                const rect = range.getBoundingClientRect();
+                
+                actionBar.classList.add('visible');
+                const barHeight = actionBar.offsetHeight;
+                const barWidth = actionBar.offsetWidth;
+                
+                const editorWrapperRect = document.getElementById('editor-wrapper').getBoundingClientRect();
+
+                let top = rect.top - editorWrapperRect.top - barHeight - 5;
+                let left = rect.left - editorWrapperRect.left + (rect.width / 2) - (barWidth / 2);
+                
+                const padding = 10;
+                if (left < padding) left = padding;
+                if (left + barWidth > editorWrapperRect.width - padding) {
+                    left = editorWrapperRect.width - barWidth - padding;
+                }
+                if (top < padding) top = rect.bottom - editorWrapperRect.top + 5;
+
+
+                actionBar.style.top = `${top}px`;
+                actionBar.style.left = `${left}px`;
+            }, 0);
+        }
+
+        document.addEventListener('mouseup', handleSelection);
+        document.addEventListener('keyup', handleSelection); 
+        editorDisplay.addEventListener('scroll', () => actionBar.classList.remove('visible'));
+        
+        document.addEventListener('mousedown', (e) => {
+            if (!editorDisplay.contains(e.target) && !actionBar.contains(e.target)) {
+                 actionBar.classList.remove('visible');
+            }
+        });
+
+        actionBar.addEventListener('click', (e) => {
+            if (e.target.classList.contains('action-btn')) {
+                const action = e.target.dataset.action;
+                const selectedText = window.getSelection().toString();
+                console.log(`Action: '${action}', Selected Text: "${selectedText}"`);
+                actionBar.classList.remove('visible');
+            }
+        });
+
+        // --- Start the application ---
+        main();
+    </script>
+</body>
+</html>
